@@ -37,7 +37,7 @@ class NotchControllerTest {
         }
     }
 
-    private static final String ELASTIC_BODY = """
+    private static final String BASE_BODY = """
             {
               "material": {"elasticModulus": 200000, "strengthCoefficient": 1200, "hardeningExponent": 0.2},
               "kt": 3.0,
@@ -46,17 +46,67 @@ class NotchControllerTest {
             """;
 
     @Test
-    void singlePointElasticReturnsExactKtTimesNominal() throws Exception {
-        mvc.perform(post("/api/notch/assess").contentType(MediaType.APPLICATION_JSON).content(ELASTIC_BODY))
+    void singlePointReturnsCoupledNeuberSolution() throws Exception {
+        byte[] response = mvc.perform(post("/api/notch/assess")
+                        .contentType(MediaType.APPLICATION_JSON).content(BASE_BODY))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.trueStress").value(300.0))
                 .andExpect(jsonPath("$.elasticStress").value(300.0))
-                .andExpect(jsonPath("$.regime").value("ELASTIC"));
+                .andExpect(jsonPath("$.regime").value("PLASTIC"))
+                .andReturn().getResponse().getContentAsByteArray();
+
+        var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response);
+        org.junit.jupiter.api.Assertions.assertEquals(257.7475,
+                json.get("trueStress").asDouble(), 1.0e-3);
+        org.junit.jupiter.api.Assertions.assertEquals(0.0017458949,
+                json.get("trueTotalStrain").asDouble(), 1.0e-9);
+        org.junit.jupiter.api.Assertions.assertTrue(
+                json.get("truePlasticStrain").asDouble() > 0.0,
+                "塑性分量必须按 R-O 真实上报，不能抹成 0");
+    }
+
+    @Test
+    void tinyLoadIsTaggedElasticButStillReportsTinyPlasticStrain() throws Exception {
+        String body = BASE_BODY.replace("100.0\n", "10.0\n");
+        byte[] response = mvc.perform(post("/api/notch/assess")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.regime").value("ELASTIC"))
+                .andReturn().getResponse().getContentAsByteArray();
+
+        var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response);
+        org.junit.jupiter.api.Assertions.assertEquals(30.0, json.get("trueStress").asDouble(), 0.01);
+        org.junit.jupiter.api.Assertions.assertTrue(
+                json.get("truePlasticStrain").asDouble() > 0.0
+                        && json.get("truePlasticStrain").asDouble() < 1.0e-6,
+                "弹性标签点的塑性分量应极小但非零");
+    }
+
+    @Test
+    void unnotchedPointFollowsUniaxialRambergOsgood() throws Exception {
+        String body = """
+                {
+                  "material": {"elasticModulus": 200000, "strengthCoefficient": 1200, "hardeningExponent": 0.2},
+                  "kt": 1.0,
+                  "nominalStress": 300.0
+                }
+                """;
+        byte[] response = mvc.perform(post("/api/notch/assess")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.regime").value("PLASTIC"))
+                .andReturn().getResponse().getContentAsByteArray();
+
+        var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response);
+        org.junit.jupiter.api.Assertions.assertEquals(300.0, json.get("trueStress").asDouble(), 0.0);
+        org.junit.jupiter.api.Assertions.assertEquals(0.0024765625,
+                json.get("trueTotalStrain").asDouble(), 1.0e-12);
+        org.junit.jupiter.api.Assertions.assertEquals(0.0009765625,
+                json.get("truePlasticStrain").asDouble(), 1.0e-12);
     }
 
     @Test
     void plasticPointShowsTrueStressBelowElasticExtrapolation() throws Exception {
-        String body = ELASTIC_BODY.replace("100.0\n", "400.0\n");
+        String body = BASE_BODY.replace("100.0\n", "400.0\n");
         byte[] response = mvc.perform(post("/api/notch/assess")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
@@ -105,12 +155,55 @@ class NotchControllerTest {
                   "nominalStresses": [100.0, 400.0]
                 }
                 """;
-        mvc.perform(post("/api/notch/sequence").contentType(MediaType.APPLICATION_JSON).content(body))
+        byte[] response = mvc.perform(post("/api/notch/sequence")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.points.length()").value(2))
-                .andExpect(jsonPath("$.points[0].point.regime").value("ELASTIC"))
+                .andExpect(jsonPath("$.points[0].point.regime").value("PLASTIC"))
                 .andExpect(jsonPath("$.points[1].point.regime").value("PLASTIC"))
-                .andExpect(jsonPath("$.points[1].segment").value("LOADING"));
+                .andExpect(jsonPath("$.points[1].segment").value("LOADING"))
+                .andReturn().getResponse().getContentAsByteArray();
+
+        var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response);
+        org.junit.jupiter.api.Assertions.assertEquals(257.7475,
+                json.get("points").get(0).get("point").get("trueStress").asDouble(), 1.0e-3);
+    }
+
+    @Test
+    void assessAndSequenceEndpointsReturnIdenticalNumbers() throws Exception {
+        double[] nominals = {110.0, 112.0, 114.0, 115.0, 116.0, 118.0, 120.0};
+        String seqBody = """
+                {
+                  "material": {"elasticModulus": 200000, "strengthCoefficient": 1200, "hardeningExponent": 0.2},
+                  "kt": 3.0,
+                  "nominalStresses": [110.0, 112.0, 114.0, 115.0, 116.0, 118.0, 120.0]
+                }
+                """;
+        byte[] seqResponse = mvc.perform(post("/api/notch/sequence")
+                        .contentType(MediaType.APPLICATION_JSON).content(seqBody))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var seqJson = mapper.readTree(seqResponse);
+        for (int i = 0; i < nominals.length; i++) {
+            String singleBody = """
+                    {
+                      "material": {"elasticModulus": 200000, "strengthCoefficient": 1200, "hardeningExponent": 0.2},
+                      "kt": 3.0,
+                      "nominalStress": %s
+                    }
+                    """.formatted(nominals[i]);
+            byte[] singleResponse = mvc.perform(post("/api/notch/assess")
+                            .contentType(MediaType.APPLICATION_JSON).content(singleBody))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsByteArray();
+
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    mapper.readTree(singleResponse),
+                    seqJson.get("points").get(i).get("point"),
+                    "单点与批量接口对 nominalStress=" + nominals[i] + " 必须给出同一组数");
+        }
     }
 
     @Test

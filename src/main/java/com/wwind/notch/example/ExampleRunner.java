@@ -31,7 +31,7 @@ public class ExampleRunner {
             LoadingSequenceRequest request = BuiltInExample.request();
             RambergOsgood law = new RambergOsgood(request.material());
             LoadingSequenceResult result = sequenceSolver.solve(law, request.kt(), request.nominalStresses());
-            log.info(BuiltInExample.renderTable(result));
+            log.info(BuiltInExample.renderTable(result, law));
         } catch (RuntimeException ex) {
             // Printing the demo must never prevent the HTTP service from serving.
             log.warn("内置算例打印失败: {}", ex.getMessage());

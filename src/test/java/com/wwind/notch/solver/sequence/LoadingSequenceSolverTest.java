@@ -17,8 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LoadingSequenceSolverTest {
 
     private final RambergOsgood law = new RambergOsgood(200_000, 1_200, 0.2);
-    private final LoadingSequenceSolver solver = new LoadingSequenceSolver(
-            new NotchAssessmentService(new NeuberPointSolver(new BisectionRootFinder())));
+    private final NotchAssessmentService assessmentService =
+            new NotchAssessmentService(new NeuberPointSolver(new BisectionRootFinder()));
+    private final LoadingSequenceSolver solver = new LoadingSequenceSolver(assessmentService);
 
     @Test
     void increasingSequenceTracesElasticToPlasticTransitionIndependently() {
@@ -30,7 +31,8 @@ class LoadingSequenceSolverTest {
         assertTrue(result.points().stream().allMatch(p -> p.segment() == Segment.LOADING));
 
         // Each point equals an independent single-point solve.
-        assertEquals(150.0, result.points().get(0).point().trueStress(), 0.0);
+        assertEquals(assessmentService.assessPoint(law, 3.0, 50.0),
+                result.points().get(0).point());
         assertEquals(1200.0, result.points().get(3).point().elasticStress(), 0.0);
         assertTrue(result.points().get(3).point().trueStress() < 1200.0);
     }

@@ -12,7 +12,8 @@ package com.wwind.notch.model;
  * @param trueTotalStrain  coupled total strain epsilon = sigma/E + (sigma/K)^(1/n)
  * @param trueElasticStrain sigma / E part of the total strain
  * @param truePlasticStrain (sigma/K)^(1/n) part of the total strain
- * @param regime           ELASTIC or PLASTIC
+ * @param regime           ELASTIC (plastic strain negligible) or PLASTIC; a
+ *                         descriptive tag that never changes the numbers
  */
 public record NotchPointResult(double nominalStress,
                                double kt,

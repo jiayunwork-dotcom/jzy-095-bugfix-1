@@ -16,12 +16,21 @@ import org.springframework.stereotype.Component;
  * </pre>
  *
  * Behavioural guarantees:
- *  - elastic regime (|Kt*sigma_n| within the 0.2% proportional limit):
- *    true stress = Kt*sigma_n, true strain = sigma/E exactly;
- *  - plastic regime: the coupled root is strictly below the elastic extrapolation
- *    while strain keeps growing faster than the Hooke line;
- *  - Kt == 1 (no notch): degenerates to the plain uniaxial Ramberg-Osgood answer,
- *    i.e. sigma = sigma_n and epsilon = RO(sigma_n);
+ *  - the coupled root is solved for EVERY non-zero load when Kt &gt; 1. There is
+ *    deliberately no "elastic shortcut" branch: a hard switch at the
+ *    proportional limit was doubly wrong. Below the switch it hid real plastic
+ *    strain (reported sigma = Kt*sigma_n, plastic strain 0 although R-O already
+ *    carries an appreciable plastic part), and at the switch itself it produced
+ *    a jump discontinuity — the nominal stress rising by 1 MPa while the notch
+ *    root stress dropped by tens of MPa under monotonic loading. Solving the
+ *    coupled root always keeps the response continuous and monotone in
+ *    |Kt*sigma_n|: sigma stays slightly below Kt*sigma_n and strain slightly
+ *    above sigma/E from the smallest load, the offsets growing smoothly;
+ *  - Kt == 1 (no notch): degenerates to the plain uniaxial Ramberg-Osgood
+ *    answer, i.e. sigma = sigma_n and epsilon = RO(sigma_n);
+ *  - the ELASTIC/PLASTIC tag is descriptive only — it follows the plastic
+ *    strain share ({@link #NEGLIGIBLE_PLASTIC_STRAIN_RATIO}) and never feeds
+ *    back into the reported stress, strain or plastic components;
  *  - a root that does not converge or fails its residual check raises
  *    {@link ConvergenceException}; a suspicious number is never returned.
  */
@@ -32,6 +41,13 @@ public class NeuberPointSolver {
     private static final double RESIDUAL_REL_TOLERANCE = 1.0e-8;
     /** How far the search bracket may grow while chasing a sign change. */
     private static final int BRACKET_EXPANSIONS = 256;
+    /**
+     * Plastic strain at or below this fraction of the elastic strain is treated
+     * as negligible, and the point is tagged ELASTIC. Labelling convention
+     * only: it changes no reported number — the plastic component is always the
+     * true R-O value, even while the tag reads ELASTIC.
+     */
+    static final double NEGLIGIBLE_PLASTIC_STRAIN_RATIO = 0.05;
 
     private final RootFinder rootFinder;
 
@@ -51,15 +67,16 @@ public class NeuberPointSolver {
             return new NeuberSolution(0.0, 0.0, 0.0, 0.0, Regime.ELASTIC);
         }
 
-        double proportionalLimit = law.proportionalLimitStress();
-        if (magnitude <= proportionalLimit) {
-            // Hooke regime: exact elastic relationships, no plastic correction.
+        double energy = magnitude * magnitude / law.elasticModulus();
+        if (energy == 0.0) {
+            // |Kt*sigma_n| so small that sigma^2/E underflowed to zero: the
+            // coupled root equals the elastic extrapolation to machine
+            // precision and the plastic part is genuinely zero as a double.
             double strain = elasticStress / law.elasticModulus();
             return new NeuberSolution(elasticStress, strain, strain, 0.0, Regime.ELASTIC);
         }
 
-        double energy = magnitude * magnitude / law.elasticModulus();
-        double rootMagnitude = solvePlasticRoot(law, magnitude, proportionalLimit, energy);
+        double rootMagnitude = solveCoupledRoot(law, magnitude, energy);
         double trueStress = Math.copySign(rootMagnitude, elasticStress);
 
         double elasticPart = law.elasticStrain(trueStress);
@@ -67,25 +84,35 @@ public class NeuberPointSolver {
         double totalStrain = elasticPart + plasticPart;
         verifyNeuberResidual(trueStress, totalStrain, energy);
 
-        return new NeuberSolution(trueStress, totalStrain, elasticPart, plasticPart, Regime.PLASTIC);
+        return new NeuberSolution(trueStress, totalStrain, elasticPart, plasticPart,
+                regimeOf(elasticPart, plasticPart));
     }
 
     private NeuberSolution uniaxial(RambergOsgood law, double nominalStress) {
-        double magnitude = Math.abs(nominalStress);
-        Regime regime = magnitude <= law.proportionalLimitStress() ? Regime.ELASTIC : Regime.PLASTIC;
+        // Always the full R-O strain: sigma/E + (sigma/K)^(1/n), never a
+        // hard-switched pure-Hooke value, so the uniaxial curve is smooth.
         double elasticPart = law.elasticStrain(nominalStress);
-        double plasticPart = regime == Regime.PLASTIC ? law.plasticStrain(nominalStress) : 0.0;
+        double plasticPart = law.plasticStrain(nominalStress);
         return new NeuberSolution(nominalStress, elasticPart + plasticPart,
-                elasticPart, plasticPart, regime);
+                elasticPart, plasticPart, regimeOf(elasticPart, plasticPart));
     }
 
-    private double solvePlasticRoot(RambergOsgood law, double elasticStressMagnitude,
-                                    double proportionalLimit, double energy) {
+    /**
+     * ELASTIC when the plastic strain component is negligible next to the
+     * elastic component, PLASTIC otherwise. Sign-folded; at zero stress the
+     * comparison 0 &le; 0 yields ELASTIC. The tag never alters any number.
+     */
+    private static Regime regimeOf(double elasticStrain, double plasticStrain) {
+        return Math.abs(plasticStrain) <= NEGLIGIBLE_PLASTIC_STRAIN_RATIO * Math.abs(elasticStrain)
+                ? Regime.ELASTIC : Regime.PLASTIC;
+    }
+
+    private double solveCoupledRoot(RambergOsgood law, double elasticStressMagnitude, double energy) {
         // At sigma=0 the residual is -energy < 0; at the elastic extrapolation
         // sigma = Kt*sigma_n it equals sigma * plasticStrain(sigma) > 0, so the
         // coupled root is bracketed inside [0, Kt*sigma_n]. Expand defensively.
         double lower = 0.0;
-        double upper = Math.max(elasticStressMagnitude, proportionalLimit);
+        double upper = elasticStressMagnitude;
         double fLower = NeuberHyperbola.residual(law, energy, lower);
         double fUpper = NeuberHyperbola.residual(law, energy, upper);
 

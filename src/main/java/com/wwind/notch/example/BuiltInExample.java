@@ -1,19 +1,25 @@
 package com.wwind.notch.example;
 
+import com.wwind.notch.constitutive.RambergOsgood;
 import com.wwind.notch.model.LoadingSequenceRequest;
 import com.wwind.notch.model.LoadingSequenceResult;
 import com.wwind.notch.model.MaterialParameters;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Built-in rounded-notch example: Kt = 3.
  * Steel-like monotonic Ramberg-Osgood constants (stresses in MPa):
  *   E = 200000 MPa, K = 1200 MPa, n = 0.20.
- * 0.2% proportional limit: K * 0.002^n ~= 359 MPa.
- * The nominal sequence crosses from elastic (Kt*sigma_n below the limit) into
- * plasticity, where the coupled true stress stays below Kt*sigma_n while strain
- * runs ahead of the elastic extrapolation.
+ * 0.2% proportional limit: K * 0.002^n ~= 346 MPa (printed from the law itself).
+ *
+ * Every row is the coupled Neuber/Ramberg-Osgood root: from the smallest load
+ * the true stress sits just below Kt*sigma_n while strain runs just ahead of
+ * the Hooke line, and the offsets grow smoothly with loading. The ELASTIC /
+ * PLASTIC tag only reflects the plastic strain share (negligible up to ~54 MPa
+ * nominal here), so the tag flips well below the proportional limit while the
+ * numbers stay continuous across it.
  */
 public final class BuiltInExample {
 
@@ -36,12 +42,14 @@ public final class BuiltInExample {
         return new LoadingSequenceRequest(material(), KT, NOMINAL_STRESSES);
     }
 
-    public static String renderTable(LoadingSequenceResult result) {
+    public static String renderTable(LoadingSequenceResult result, RambergOsgood law) {
         StringBuilder sb = new StringBuilder();
         sb.append(System.lineSeparator())
                 .append("内置算例: 圆角缺口 Kt=3, E=200000 MPa, K=1200 MPa, n=0.20 (单调加载)")
                 .append(System.lineSeparator())
-                .append("比例极限(0.2%残余应变) sigma_p = K*0.002^n ~= 359 MPa")
+                .append(String.format(Locale.ROOT,
+                        "比例极限(0.2%%残余应变) sigma_p = K*0.002^n ~= %.1f MPa",
+                        law.proportionalLimitStress()))
                 .append(System.lineSeparator())
                 .append(" sigma_n | 弹性外推 Kt*sn | 真实应力 | 真实总应变 | 弹性应变 | 塑性应变 | 区间")
                 .append(System.lineSeparator())
@@ -49,7 +57,7 @@ public final class BuiltInExample {
                 .append(System.lineSeparator());
         for (var p : result.points()) {
             var pt = p.point();
-            sb.append(String.format(java.util.Locale.ROOT,
+            sb.append(String.format(Locale.ROOT,
                     " %7.1f | %14.1f | %8.2f | %9.6f | %9.6f | %9.6f | %s%n",
                     pt.nominalStress(), pt.elasticStress(), pt.trueStress(),
                     pt.trueTotalStrain(), pt.trueElasticStrain(), pt.truePlasticStrain(),

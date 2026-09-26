@@ -21,14 +21,29 @@ class NeuberPointSolverTest {
     private final NeuberPointSolver solver = new NeuberPointSolver(new BisectionRootFinder());
 
     @Test
-    void withinElasticLimitTrueStressEqualsKtTimesNominalExactly() {
-        // sigma_p ~= 358.9 MPa; Kt*100 = 300 stays elastic.
+    void coupledRootIsSolvedAtEveryLoadNotJustAboveTheProportionalLimit() {
+        // Kt*100 = 300 MPa is below the 0.2% proportional limit (~346 MPa), yet
+        // the R-O plastic strain is already ~35% of the elastic strain there.
+        // There is no elastic shortcut: the coupled root is 257.75 MPa and the
+        // plastic component is reported honestly.
         NeuberSolution s = solver.solve(law, 3.0, 100.0);
 
-        assertEquals(300.0, s.trueStress(), 1e-12);
-        assertEquals(300.0 / E, s.trueTotalStrain(), 1e-14);
-        assertEquals(0.0, s.truePlasticStrain(), 0.0);
+        assertEquals(257.7475, s.trueStress(), 1e-3);
+        assertEquals(0.0017458949, s.trueTotalStrain(), 1e-9);
+        assertTrue(s.truePlasticStrain() > 0.0, "塑性分量必须按 R-O 真实上报，不能抹成 0");
+        assertEquals(Regime.PLASTIC, s.regime());
+    }
+
+    @Test
+    void tinyLoadStaysElasticWithNegligiblePlasticStrain() {
+        // Kt*10 = 30 MPa: plastic strain ~0.01% of the elastic strain, tag ELASTIC,
+        // but the numbers remain the coupled root (30 MPa to within 0.01).
+        NeuberSolution s = solver.solve(law, 3.0, 10.0);
+
+        assertEquals(30.0, s.trueStress(), 0.01);
+        assertEquals(1.5e-4, s.trueTotalStrain(), 1e-7);
         assertEquals(Regime.ELASTIC, s.regime());
+        assertTrue(s.truePlasticStrain() > 0.0 && s.truePlasticStrain() < 1e-6);
     }
 
     @Test
@@ -76,11 +91,23 @@ class NeuberPointSolverTest {
     }
 
     @Test
-    void ktOneIsExactUniaxialElasticBelowLimit() {
-        NeuberSolution s = solver.solve(law, 1.0, 200.0);
-        assertEquals(200.0, s.trueStress(), 0.0);
-        assertEquals(200.0 / E, s.trueTotalStrain(), 1e-15);
+    void ktOneUniaxialWithNegligiblePlasticShareIsTaggedElastic() {
+        NeuberSolution s = solver.solve(law, 1.0, 100.0);
+        assertEquals(100.0, s.trueStress(), 0.0);
+        assertEquals(law.totalStrain(100.0), s.trueTotalStrain(), 1e-15);
         assertEquals(Regime.ELASTIC, s.regime());
+    }
+
+    @Test
+    void ktOneUniaxialAlwaysReportsFullRambergOsgoodStrain() {
+        // sigma_n = 300: plastic strain is already 65% of the elastic strain.
+        // The old hard switch reported eps = sigma/E = 0.0015, plastic 0;
+        // the true uniaxial R-O answer is 0.0024765625.
+        NeuberSolution s = solver.solve(law, 1.0, 300.0);
+        assertEquals(300.0, s.trueStress(), 0.0);
+        assertEquals(0.0024765625, s.trueTotalStrain(), 1e-12);
+        assertEquals(0.0009765625, s.truePlasticStrain(), 1e-12);
+        assertEquals(Regime.PLASTIC, s.regime());
     }
 
     @Test
