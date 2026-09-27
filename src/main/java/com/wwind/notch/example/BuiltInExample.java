@@ -1,5 +1,6 @@
 package com.wwind.notch.example;
 
+import com.wwind.notch.constitutive.RambergOsgood;
 import com.wwind.notch.model.LoadingSequenceRequest;
 import com.wwind.notch.model.LoadingSequenceResult;
 import com.wwind.notch.model.MaterialParameters;
@@ -10,10 +11,10 @@ import java.util.List;
  * Built-in rounded-notch example: Kt = 3.
  * Steel-like monotonic Ramberg-Osgood constants (stresses in MPa):
  *   E = 200000 MPa, K = 1200 MPa, n = 0.20.
- * 0.2% proportional limit: K * 0.002^n ~= 359 MPa.
- * The nominal sequence crosses from elastic (Kt*sigma_n below the limit) into
- * plasticity, where the coupled true stress stays below Kt*sigma_n while strain
- * runs ahead of the elastic extrapolation.
+ * 0.2% offset reference stress: K * 0.002^n ~= 346 MPa (material reference only;
+ * the ELASTIC/PLASTIC label follows plastic-strain negligibility, not this value).
+ * As the nominal sequence grows, the coupled true stress falls below Kt*sigma_n
+ * while strain runs ahead of the elastic extrapolation.
  */
 public final class BuiltInExample {
 
@@ -36,12 +37,14 @@ public final class BuiltInExample {
         return new LoadingSequenceRequest(material(), KT, NOMINAL_STRESSES);
     }
 
-    public static String renderTable(LoadingSequenceResult result) {
+    public static String renderTable(LoadingSequenceResult result, RambergOsgood law) {
         StringBuilder sb = new StringBuilder();
         sb.append(System.lineSeparator())
                 .append("内置算例: 圆角缺口 Kt=3, E=200000 MPa, K=1200 MPa, n=0.20 (单调加载)")
                 .append(System.lineSeparator())
-                .append("比例极限(0.2%残余应变) sigma_p = K*0.002^n ~= 359 MPa")
+                .append(String.format(java.util.Locale.ROOT,
+                        "比例极限(0.2%%残余应变) sigma_p = K*0.002^n = %.1f MPa (材料参考值; 弹性/塑性按塑性应变可否忽略判定)",
+                        law.proportionalLimitStress()))
                 .append(System.lineSeparator())
                 .append(" sigma_n | 弹性外推 Kt*sn | 真实应力 | 真实总应变 | 弹性应变 | 塑性应变 | 区间")
                 .append(System.lineSeparator())

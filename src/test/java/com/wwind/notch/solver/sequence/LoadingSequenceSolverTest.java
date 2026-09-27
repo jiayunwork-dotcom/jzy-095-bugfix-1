@@ -22,17 +22,20 @@ class LoadingSequenceSolverTest {
 
     @Test
     void increasingSequenceTracesElasticToPlasticTransitionIndependently() {
-        LoadingSequenceResult result = solver.solve(law, 3.0, List.of(50.0, 100.0, 120.0, 400.0));
+        LoadingSequenceResult result = solver.solve(law, 3.0, List.of(10.0, 50.0, 100.0, 120.0, 400.0));
 
-        assertEquals(4, result.points().size());
+        assertEquals(5, result.points().size());
+        // Kt*10 = 30 MPa keeps negligible plasticity; from Kt*50 = 150 MPa on it does not.
         assertEquals(Regime.ELASTIC, result.points().get(0).point().regime());
-        assertEquals(Regime.PLASTIC, result.points().get(3).point().regime());
+        assertTrue(result.points().stream().skip(1)
+                .allMatch(p -> p.point().regime() == Regime.PLASTIC));
         assertTrue(result.points().stream().allMatch(p -> p.segment() == Segment.LOADING));
 
         // Each point equals an independent single-point solve.
-        assertEquals(150.0, result.points().get(0).point().trueStress(), 0.0);
-        assertEquals(1200.0, result.points().get(3).point().elasticStress(), 0.0);
-        assertTrue(result.points().get(3).point().trueStress() < 1200.0);
+        assertEquals(30.0, result.points().get(0).point().trueStress(), 1e-2);
+        assertEquals(147.244, result.points().get(1).point().trueStress(), 1e-3);
+        assertEquals(1200.0, result.points().get(4).point().elasticStress(), 0.0);
+        assertTrue(result.points().get(4).point().trueStress() < 1200.0);
     }
 
     @Test

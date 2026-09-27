@@ -21,14 +21,35 @@ class NeuberPointSolverTest {
     private final NeuberPointSolver solver = new NeuberPointSolver(new BisectionRootFinder());
 
     @Test
-    void withinElasticLimitTrueStressEqualsKtTimesNominalExactly() {
-        // sigma_p ~= 358.9 MPa; Kt*100 = 300 stays elastic.
+    void coupledRootAtKt3Nominal100MatchesHandCalculation() {
+        // Kt*100 = 300 MPa: plastic strain is already ~35% of the elastic strain,
+        // so the coupled Neuber root sits well below the elastic extrapolation.
         NeuberSolution s = solver.solve(law, 3.0, 100.0);
 
-        assertEquals(300.0, s.trueStress(), 1e-12);
-        assertEquals(300.0 / E, s.trueTotalStrain(), 1e-14);
-        assertEquals(0.0, s.truePlasticStrain(), 0.0);
+        assertEquals(257.7475, s.trueStress(), 1e-3);
+        assertEquals(0.0017459, s.trueTotalStrain(), 1e-7);
+        assertTrue(s.truePlasticStrain() > 0.0);
+        assertEquals(Regime.PLASTIC, s.regime());
+
+        // Neuber equality sigma*epsilon = (Kt*sigma_n)^2 / E.
+        double rhs = 300.0 * 300.0 / E;
+        assertEquals(rhs, s.trueStress() * s.trueTotalStrain(), rhs * 1e-8);
+        // Constitutive split epsilon = sigma/E + (sigma/K)^(1/n).
+        assertEquals(s.trueStress() / E + Math.pow(s.trueStress() / K, 1.0 / N),
+                s.trueTotalStrain(), s.trueTotalStrain() * 1e-8);
+    }
+
+    @Test
+    void negligiblePlasticStrainKeepsElasticLabel() {
+        // Kt*10 = 30 MPa: plastic strain ~1e-8 is ~0.007% of the elastic strain,
+        // so the point is labelled ELASTIC while still reporting the coupled root.
+        NeuberSolution s = solver.solve(law, 3.0, 10.0);
+
         assertEquals(Regime.ELASTIC, s.regime());
+        assertEquals(30.0, s.trueStress(), 1e-2);
+        assertEquals(30.0 / E, s.trueTotalStrain(), 1e-7);
+        assertTrue(Math.abs(s.truePlasticStrain())
+                <= RambergOsgood.NEGLIGIBLE_PLASTIC_FRACTION * Math.abs(s.trueElasticStrain()));
     }
 
     @Test
@@ -76,11 +97,14 @@ class NeuberPointSolverTest {
     }
 
     @Test
-    void ktOneIsExactUniaxialElasticBelowLimit() {
+    void ktOneReportsUniaxialPlasticStrainWheneverItIsNotNegligible() {
+        // sigma_n = 200 MPa: plastic strain (200/1200)^5 ~ 1.29e-4 is ~13% of the
+        // elastic strain — far from negligible, so it must be reported, not zeroed.
         NeuberSolution s = solver.solve(law, 1.0, 200.0);
         assertEquals(200.0, s.trueStress(), 0.0);
-        assertEquals(200.0 / E, s.trueTotalStrain(), 1e-15);
-        assertEquals(Regime.ELASTIC, s.regime());
+        assertEquals(200.0 / E + Math.pow(200.0 / K, 1.0 / N), s.trueTotalStrain(), 1e-15);
+        assertEquals(Math.pow(200.0 / K, 1.0 / N), s.truePlasticStrain(), 1e-15);
+        assertEquals(Regime.PLASTIC, s.regime());
     }
 
     @Test

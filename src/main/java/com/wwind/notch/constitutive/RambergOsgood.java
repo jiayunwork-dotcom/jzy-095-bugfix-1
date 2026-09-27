@@ -20,6 +20,15 @@ public class RambergOsgood {
     /** Engineering strain used to define the proportional limit (0.2% offset). */
     public static final double OFFSET_STRAIN = 0.002;
 
+    /**
+     * Plastic strain counts as negligible up to this fraction of the elastic
+     * strain. This — not the 0.2% offset limit — decides the ELASTIC/PLASTIC
+     * regime label: Ramberg-Osgood has no truly elastic range (the plastic term
+     * is non-zero at every stress), so "elastic" can only ever mean "plasticity
+     * too small to matter".
+     */
+    public static final double NEGLIGIBLE_PLASTIC_FRACTION = 1.0e-3;
+
     private final double elasticModulus;
     private final double strengthCoefficient;
     private final double hardeningExponent;
@@ -80,9 +89,23 @@ public class RambergOsgood {
     }
 
     /**
+     * True when the plastic strain at the given stress is negligible next to the
+     * elastic strain: |eps_p| &lt;= {@link #NEGLIGIBLE_PLASTIC_FRACTION} * |eps_e|.
+     */
+    public boolean plasticStrainNegligible(double stress) {
+        return Math.abs(plasticStrain(stress))
+                <= NEGLIGIBLE_PLASTIC_FRACTION * Math.abs(elasticStrain(stress));
+    }
+
+    /**
      * Proportional limit defined by the 0.2% residual-strain (offset) convention,
      * i.e. the stress at which (sigma/K)^(1/n) = 0.002.
      * Solved analytically: sigma = K * 0.002^n.
+     *
+     * This is a material reference value only (the 0.2% proof stress), NOT an
+     * elastic/plastic switch: the plastic term is non-zero at every stress and
+     * is already a large fraction of the elastic strain well below this limit.
+     * Regime labelling uses {@link #plasticStrainNegligible(double)}.
      */
     public double proportionalLimitStress() {
         return strengthCoefficient * Math.pow(OFFSET_STRAIN, hardeningExponent);

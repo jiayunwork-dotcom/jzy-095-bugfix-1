@@ -16,12 +16,17 @@ import org.springframework.stereotype.Component;
  * </pre>
  *
  * Behavioural guarantees:
- *  - elastic regime (|Kt*sigma_n| within the 0.2% proportional limit):
- *    true stress = Kt*sigma_n, true strain = sigma/E exactly;
- *  - plastic regime: the coupled root is strictly below the elastic extrapolation
- *    while strain keeps growing faster than the Hooke line;
+ *  - every non-zero load solves the coupled equation. Ramberg-Osgood has no
+ *    truly elastic range — the plastic term (sigma/K)^(1/n) is non-zero at any
+ *    stress — so the elastic extrapolation sigma = Kt*sigma_n is never returned
+ *    as the "true" answer, and the response is continuous and strictly
+ *    monotone in the nominal stress;
+ *  - the ELASTIC/PLASTIC label follows {@link RambergOsgood#plasticStrainNegligible}:
+ *    ELASTIC only when the plastic strain is negligible next to the elastic
+ *    strain. An ELASTIC label still carries the honest coupled root and its
+ *    (tiny) plastic strain; the label never hides plasticity;
  *  - Kt == 1 (no notch): degenerates to the plain uniaxial Ramberg-Osgood answer,
- *    i.e. sigma = sigma_n and epsilon = RO(sigma_n);
+ *    i.e. sigma = sigma_n and epsilon = RO(sigma_n), plastic part included;
  *  - a root that does not converge or fails its residual check raises
  *    {@link ConvergenceException}; a suspicious number is never returned.
  */
@@ -51,15 +56,8 @@ public class NeuberPointSolver {
             return new NeuberSolution(0.0, 0.0, 0.0, 0.0, Regime.ELASTIC);
         }
 
-        double proportionalLimit = law.proportionalLimitStress();
-        if (magnitude <= proportionalLimit) {
-            // Hooke regime: exact elastic relationships, no plastic correction.
-            double strain = elasticStress / law.elasticModulus();
-            return new NeuberSolution(elasticStress, strain, strain, 0.0, Regime.ELASTIC);
-        }
-
         double energy = magnitude * magnitude / law.elasticModulus();
-        double rootMagnitude = solvePlasticRoot(law, magnitude, proportionalLimit, energy);
+        double rootMagnitude = solvePlasticRoot(law, magnitude, energy);
         double trueStress = Math.copySign(rootMagnitude, elasticStress);
 
         double elasticPart = law.elasticStrain(trueStress);
@@ -67,25 +65,24 @@ public class NeuberPointSolver {
         double totalStrain = elasticPart + plasticPart;
         verifyNeuberResidual(trueStress, totalStrain, energy);
 
-        return new NeuberSolution(trueStress, totalStrain, elasticPart, plasticPart, Regime.PLASTIC);
+        Regime regime = law.plasticStrainNegligible(trueStress) ? Regime.ELASTIC : Regime.PLASTIC;
+        return new NeuberSolution(trueStress, totalStrain, elasticPart, plasticPart, regime);
     }
 
     private NeuberSolution uniaxial(RambergOsgood law, double nominalStress) {
-        double magnitude = Math.abs(nominalStress);
-        Regime regime = magnitude <= law.proportionalLimitStress() ? Regime.ELASTIC : Regime.PLASTIC;
         double elasticPart = law.elasticStrain(nominalStress);
-        double plasticPart = regime == Regime.PLASTIC ? law.plasticStrain(nominalStress) : 0.0;
+        double plasticPart = law.plasticStrain(nominalStress);
+        Regime regime = law.plasticStrainNegligible(nominalStress) ? Regime.ELASTIC : Regime.PLASTIC;
         return new NeuberSolution(nominalStress, elasticPart + plasticPart,
                 elasticPart, plasticPart, regime);
     }
 
-    private double solvePlasticRoot(RambergOsgood law, double elasticStressMagnitude,
-                                    double proportionalLimit, double energy) {
+    private double solvePlasticRoot(RambergOsgood law, double elasticStressMagnitude, double energy) {
         // At sigma=0 the residual is -energy < 0; at the elastic extrapolation
         // sigma = Kt*sigma_n it equals sigma * plasticStrain(sigma) > 0, so the
         // coupled root is bracketed inside [0, Kt*sigma_n]. Expand defensively.
         double lower = 0.0;
-        double upper = Math.max(elasticStressMagnitude, proportionalLimit);
+        double upper = elasticStressMagnitude;
         double fLower = NeuberHyperbola.residual(law, energy, lower);
         double fUpper = NeuberHyperbola.residual(law, energy, upper);
 

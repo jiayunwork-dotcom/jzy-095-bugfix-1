@@ -37,7 +37,7 @@ class NotchControllerTest {
         }
     }
 
-    private static final String ELASTIC_BODY = """
+    private static final String BASE_BODY = """
             {
               "material": {"elasticModulus": 200000, "strengthCoefficient": 1200, "hardeningExponent": 0.2},
               "kt": 3.0,
@@ -46,17 +46,30 @@ class NotchControllerTest {
             """;
 
     @Test
-    void singlePointElasticReturnsExactKtTimesNominal() throws Exception {
-        mvc.perform(post("/api/notch/assess").contentType(MediaType.APPLICATION_JSON).content(ELASTIC_BODY))
+    void singlePointWithNonNegligiblePlasticityReturnsCoupledRoot() throws Exception {
+        // Kt=3, sigma_n=100: the coupled root relaxes to ~257.7 MPa, well below
+        // the 300 MPa elastic extrapolation (kept as the comparison field).
+        mvc.perform(post("/api/notch/assess").contentType(MediaType.APPLICATION_JSON).content(BASE_BODY))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.trueStress").value(300.0))
+                .andExpect(jsonPath("$.trueStress").value(org.hamcrest.Matchers.closeTo(257.7475, 1e-3)))
                 .andExpect(jsonPath("$.elasticStress").value(300.0))
+                .andExpect(jsonPath("$.regime").value("PLASTIC"));
+    }
+
+    @Test
+    void singlePointWithNegligiblePlasticityKeepsElasticLabel() throws Exception {
+        // Kt*10 = 30 MPa: plastic strain ~1e-8 is negligible -> ELASTIC label.
+        String body = BASE_BODY.replace("100.0\n", "10.0\n");
+        mvc.perform(post("/api/notch/assess").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.trueStress").value(org.hamcrest.Matchers.closeTo(30.0, 1e-2)))
+                .andExpect(jsonPath("$.elasticStress").value(30.0))
                 .andExpect(jsonPath("$.regime").value("ELASTIC"));
     }
 
     @Test
     void plasticPointShowsTrueStressBelowElasticExtrapolation() throws Exception {
-        String body = ELASTIC_BODY.replace("100.0\n", "400.0\n");
+        String body = BASE_BODY.replace("100.0\n", "400.0\n");
         byte[] response = mvc.perform(post("/api/notch/assess")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
@@ -108,9 +121,35 @@ class NotchControllerTest {
         mvc.perform(post("/api/notch/sequence").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.points.length()").value(2))
-                .andExpect(jsonPath("$.points[0].point.regime").value("ELASTIC"))
+                .andExpect(jsonPath("$.points[0].point.regime").value("PLASTIC"))
                 .andExpect(jsonPath("$.points[1].point.regime").value("PLASTIC"))
                 .andExpect(jsonPath("$.points[1].segment").value("LOADING"));
+    }
+
+    @Test
+    void singleAndBatchEndpointsAgreeOnSameInput() throws Exception {
+        byte[] single = mvc.perform(post("/api/notch/assess")
+                        .contentType(MediaType.APPLICATION_JSON).content(BASE_BODY))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+
+        String seqBody = """
+                {
+                  "material": {"elasticModulus": 200000, "strengthCoefficient": 1200, "hardeningExponent": 0.2},
+                  "kt": 3.0,
+                  "nominalStresses": [100.0]
+                }
+                """;
+        byte[] batch = mvc.perform(post("/api/notch/sequence")
+                        .contentType(MediaType.APPLICATION_JSON).content(seqBody))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var singleJson = mapper.readTree(single);
+        var batchPointJson = mapper.readTree(batch).get("points").get(0).get("point");
+        org.junit.jupiter.api.Assertions.assertEquals(singleJson, batchPointJson,
+                "单点与批量接口对同一输入必须给出同一组数");
     }
 
     @Test

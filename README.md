@@ -31,12 +31,12 @@
 
 ## 关键数值行为
 
-- 名义应力在弹性范围内（Kt·σn 未超过 0.2% 比例极限）：**精确**有 σ = Kt·σn、ε = σ/E；
+- 每个非零载荷点都求解 Neuber∧R-O 联立方程（R-O 没有真正的线弹性段，塑性项在任何应力下都非零），响应随名义应力连续、严格单调；
+- ELASTIC/PLASTIC 标签按塑性应变是否可忽略判定（|ε_p| ≤ 0.1%·|ε_e| 记 ELASTIC）；弹性标签点同样上报联立解与微小塑性应变，绝不把塑性应变抹成 0；
 - 进入塑性后：真实应力增长放缓且 **σ < Kt·σn**，真实应变加快增长，塑性分量非零；
 - Kt 越大，同一名义应力下缺口越苛刻（应力、应变都更大）；
-- **Kt = 1 时 Neuber 退化回单轴 Ramberg–Osgood**：σ = σn、ε = RO(σn)；
+- **Kt = 1 时 Neuber 退化回单轴 Ramberg–Osgood**：σ = σn、ε = RO(σn)（含塑性分量）；
 - 塑性幂次统一取自 `RambergOsgood.plasticExponent()`，即 **1/n**（误写成 n 会让整段塑性分支变歪）；
-- 进入塑性后绝不再沿用 σ = Kt·σn，而是求解联立根，否则应变不再放大、Neuber 交叉失效；
 - 求根不收敛或残差校核不过：抛 `ConvergenceException` → HTTP **422**，绝不返回可疑数值。
 
 ## 输入校验（HTTP 400，返回全部原因）
@@ -82,7 +82,7 @@ curl -s -X POST localhost:8080/api/notch/sequence \
 curl -s localhost:8080/api/notch/example
 ```
 
-内置算例参数：E = 200000 MPa，K = 1200 MPa，n = 0.20，Kt = 3，比例极限 σp = K·0.002^n ≈ 359 MPa。名义应力越过该门槛后，输出中的 `trueStress` 将明显低于 `elasticStress`（= Kt·σn），`truePlasticStrain` 由 0 转为正值。
+内置算例参数：E = 200000 MPa，K = 1200 MPa，n = 0.20，Kt = 3，0.2% 条件屈服参考值 σp = K·0.002^n ≈ 346 MPa（仅作材料参考，不是弹性/塑性分界）。随名义应力增大，`trueStress` 逐渐落到 `elasticStress`（= Kt·σn）之下，`truePlasticStrain` 始终如实上报；当塑性应变相对弹性应变不可忽略（> 0.1%）时，`regime` 由 ELASTIC 转为 PLASTIC。
 
 ## 测试
 
@@ -90,4 +90,4 @@ curl -s localhost:8080/api/notch/example
 mvn test
 ```
 
-重点覆盖：弹性极限内 σ = Kt·σn 的精确关系、Kt = 1 退回单轴 R-O、进入塑性后应力放缓/应变加快/Neuber 等式成立、Kt 越大越苛刻、非法输入带原因 400，以及求根不收敛时经二分器与完整 HTTP 栈返回 422 的报错路径。
+重点覆盖：沿递增序列逐点核验单调连续性与本构一致性（Neuber 等式 + R-O 拆分，相对误差 1e-8 量级）、Kt=3/名义 100 对手算值 257.7 MPa、Kt=1 退回单轴 R-O（名义 300 → ε=0.0024766）、深塑性回归值（Kt=3/名义 150 → ≈325.9 MPa）、单点与批量接口结果一致、正负镜像、Kt 越大越苛刻、非法输入带原因 400，以及求根不收敛时经二分器与完整 HTTP 栈返回 422 的报错路径。
